@@ -2,7 +2,8 @@
 #include <iostream>
 #include <vector>
 #include <cmath>
-#include <cstdlib>
+#include <random>
+#include <chrono>
 using namespace std;
 
 class MLP {
@@ -10,76 +11,155 @@ class MLP {
     int entradas;
     int ocultas;
     int saidas;
-    double bias;
+    double taxa_aprendizado;
+
     vector<vector<double>> pesos_entradas_para_ocultas;
     vector<vector<double>> pesos_ocultas_para_saidas;
 
+    vector<double> bias_ocultas;
+    vector<double> bias_saidas;
+
+    std::mt19937 rng;
+
   public:
-    MLP(int entradas, int ocultas, int saidas) {
-      this->entradas = entradas;
-      this->ocultas = ocultas;
-      this->saidas = saidas;
-      this->bias = 1.0;
-      // inicializar pesos com valores aleatórios
-      pesos_entradas_para_ocultas.resize(entradas, vector<double>(ocultas));
-      pesos_ocultas_para_saidas.resize(ocultas, vector<double>(saidas));
-      inicializar_pesos();
+    MLP(int entradas, int ocultas, int saidas, double taxa_aprendizado)
+        : entradas(entradas), ocultas(ocultas), saidas(saidas), taxa_aprendizado(taxa_aprendizado)
+    {
+        this->rng.seed((unsigned) chrono::high_resolution_clock::now().time_since_epoch().count());
+
+        this->pesos_entradas_para_ocultas.assign(entradas, vector<double>(ocultas));
+        this->pesos_ocultas_para_saidas.assign(ocultas, vector<double>(saidas));
+        this->bias_ocultas.assign(ocultas, 0.0);
+        this->bias_saidas.assign(saidas, 0.0);
+
+        this->inicializar_pesos();
     }
+
+    // função de ativação ReLU
+    double relu(double x) {return x > 0 ? x : 0;}
+
+    double relu_derivada(double x) { return x > 0 ? 1.0 : 0.0; }
+
+    // Função de ativação sigmóide
+    double sigmoid (double x) {return 1 / (1 + exp(-x));}
+
+    double sigmoid_derivada(double fx) {return fx * (1 - fx);}
 
     // 1 - Atribui pesos para cada conexão entre camadas
     void inicializar_pesos() {
-      for (int i = 0; i < entradas; i++) {
-        for (int j = 0; j < ocultas; j++) {
-          pesos_entradas_para_ocultas[i][j] = ((double) rand() / RAND_MAX);
-        }
-      }
 
-      for (int i = 0; i < ocultas; i++) {
-        for (int j = 0; j < saidas; j++) {
-          pesos_ocultas_para_saidas[i][j] = ((double) rand() / RAND_MAX);
-        }
-      }
+      uniform_real_distribution<double> dist(-1.0, 1.0);
+      
+      for (int i = 0; i < entradas; ++i)
+        for (int j = 0; j < ocultas; ++j)
+          pesos_entradas_para_ocultas[i][j] = dist(rng);
+
+      for (int j = 0; j < ocultas; ++j)
+        for (int k = 0; k < saidas; ++k)
+          pesos_ocultas_para_saidas[j][k] = dist(rng);
+
+      for (int j = 0; j < ocultas; ++j) bias_ocultas[j] = dist(rng);
+      for (int k = 0; k < saidas; ++k)  bias_saidas[k]  = dist(rng);
     }
 
     // 2 - Propagação para frente
-    vector<double> feedpropagation(const vector<double>& entrada) {
-      vector<double> ocultas_ativadas(ocultas);
-      vector<double> saidas_ativadas(saidas);
+    vector<double> feedforward(
+      const vector<double>& entrada,
+      vector<double>& ocultas_ativadas,
+      vector<double>& saidas_ativadas) {
 
-      // Calcular ativações da camada oculta
+      ocultas_ativadas.assign(this->ocultas, 0.0);
+      saidas_ativadas.assign(this->saidas, 0.0);
+
+      // Calcular ativações da camada oculta (intermediárias)
       for (int j = 0; j < ocultas; j++) {
+
         double soma = 0.0;
+
         for (int i = 0; i < entradas; i++){
           soma += entrada[i] * pesos_entradas_para_ocultas[i][j];
         }
 
-        soma += bias;
-        ocultas_ativadas[j] = relu(soma);
+        soma += bias_ocultas[j];
+
+        // Aplica ReLU para ativar o neurônio, retornando 1 caso a soma seja positiva diferente de 0
+        ocultas_ativadas[j] = this->relu(soma);
       }
 
-      // Calcular ativações da camada de saída
-      for (int j = 0; j < saidas; j++) {
+      // Calcular ativações da camada de saída (resultado)
+      for (int k = 0; k < saidas; k++) {
+        
         double soma = 0.0;
-        for (int i = 0; i < ocultas; i++) {
-          soma += ocultas_ativadas[i] * pesos_ocultas_para_saidas[i][j];
+
+        for (int j = 0; j < ocultas; j++) {
+          soma += ocultas_ativadas[j] * pesos_ocultas_para_saidas[j][k];
         }
-        soma += bias;
-        saidas_ativadas[j] = sigmoid(soma);
+
+        soma += bias_saidas[k];
+        saidas_ativadas[k] = this->sigmoid(soma);
       }
+
+      return saidas_ativadas;
     }
 
-    // 3 - função de ativação ReLU
-    double relu(double x) {
-      return x > 0 ? x : 0;
+
+    // 6 - função de retorno do erro para ajustar os pesos
+    void backpropagation(
+      const vector<double> &entrada, 
+      const vector<double> &real,
+      vector<double>& ocultas_ativadas,
+      vector<double>& saidas_ativadas){
+
+      // Executa feedforward para ter os valores atualizados
+      feedforward(entrada, ocultas_ativadas, saidas_ativadas);
+
+      vector<double> gradiente_saida(this->saidas);
+
+      // Gradiente da camada de saída
+      vector<double> erro_saida(this->saidas);
+      for (int k = 0; k < saidas; k++) {
+
+        // Calcula o erro nas saídas
+        erro_saida[k] = real[k] - saidas_ativadas[k];
+        gradiente_saida[k] = erro_saida[k] * sigmoid_derivada(saidas_ativadas[k]);
+      }
+
+      vector<double> gradiente_oculta(ocultas);
+
+      for (int j = 0; j < ocultas; j++) {
+        double soma = 0.0;
+
+        for (int k = 0; k < this->saidas; k++) {
+          soma += gradiente_saida[k] * pesos_ocultas_para_saidas[j][k];
+        }
+
+        gradiente_oculta[j] = soma * relu_derivada(ocultas_ativadas[j]);
+      }
+
+      update_weights(entrada, ocultas_ativadas, gradiente_saida, gradiente_oculta);
     }
 
-    // 4 - Função de ativação sigmóide
-    double sigmoid (double x) {
-      return 1 / (1 + exp(-x));
-    }
 
-    double sigmoid_derivada(double fx) {
-      return fx * (1 - fx);
+    // 3 - função de correção dos pesos
+    void update_weights(
+      const vector<double>& entradas, 
+      const vector<double>& ocultas, 
+      const vector<double>& gradiente_saida ,
+      const vector<double>& gradiente_oculta) {
+      
+      for (int j = 0; j < ocultas.size(); j++) {
+        for (int i = 0; i < saidas; i++) {
+          double gradiente = erros[i] * sigmoid_derivada(ocultas[j]);
+          pesos_ocultas_para_saidas[j][i] += taxa_aprendizado * gradiente * ocultas[j];
+        }
+      }
+
+      for (int j = 0; j < entradas.size(); j++) {
+        for (int i = 0; i < ocultas.size(); i++) {
+          double gradiente = gradiente_oculta[i] * sigmoid_derivada(entradas[j]);
+          pesos_entradas_para_ocultas[j][i] += taxa_aprendizado * gradiente * entradas[j];
+        }
+      }
     }
 
     // 5 - função de calculo do erro
@@ -89,10 +169,5 @@ class MLP {
         erro += pow(real[i] - estimado[i], 2) / 2;
       }
       return erro;
-    }
-
-    // 6 - função de retorno do erro para ajustar os pesos
-    vector<double> backpropagation(const vector<double> &entrada, const vector<double>&){
-
     }
 };
