@@ -1,9 +1,8 @@
-#include <iostream>
-#include <vector>
-#include <cmath>
-#include <random>
-#include <chrono>
 #include "neural.hpp"
+
+#include <iostream>
+#include <cmath>
+#include <chrono>
 
 using namespace std;
 
